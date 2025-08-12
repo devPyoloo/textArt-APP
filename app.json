@@ -42,7 +42,8 @@
           "savePhotosPermission": "Allow TextArt to save TextArt images to your photo library.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }
