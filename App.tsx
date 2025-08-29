@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Font from 'expo-font';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -157,13 +158,17 @@ export default function App() {
   const [customFonts, setCustomFonts] = useState<Array<{name: string, value: string, uri: string}>>([]);
   const [allFonts, setAllFonts] = useState<Array<{name: string, value: string}>>([]);
   const [selectedPictureCategory, setSelectedPictureCategory] = useState<string>('全部');
+  const [customBackgrounds, setCustomBackgrounds] = useState<Array<{id: string, name: string, uri: string}>>([]);
+  const [showCustomFonts, setShowCustomFonts] = useState(false);
   
   const viewShotRef = useRef<ViewShot>(null);
+  const textInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    StatusBar.setBarStyle('light-content');
+    StatusBar.setBarStyle('dark-content');
     loadFonts();
     loadCustomFonts();
+    loadCustomBackgrounds();
   }, []);
 
   useEffect(() => {
@@ -237,6 +242,72 @@ export default function App() {
     }
   };
 
+  const loadCustomBackgrounds = async () => {
+    try {
+      const savedBackgrounds = await AsyncStorage.getItem('customBackgrounds');
+      if (savedBackgrounds) {
+        const backgrounds = JSON.parse(savedBackgrounds);
+        setCustomBackgrounds(backgrounds);
+      }
+    } catch (error) {
+      console.log('Error loading custom backgrounds:', error);
+    }
+  };
+
+  const saveCustomBackgrounds = async (backgrounds: Array<{id: string, name: string, uri: string}>) => {
+    try {
+      await AsyncStorage.setItem('customBackgrounds', JSON.stringify(backgrounds));
+    } catch (error) {
+      console.log('Error saving custom backgrounds:', error);
+    }
+  };
+
+  const pickCustomBackground = async () => {
+    try {
+      // Request permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('需要权限', '请授权访问相册以选择背景图片');
+        return;
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        
+        // Create a new custom background
+        const newBackground = {
+          id: `custom_${Date.now()}`,
+          name: `自定义背景 ${customBackgrounds.length + 1}`,
+          uri: asset.uri,
+        };
+
+        const updatedBackgrounds = [...customBackgrounds, newBackground];
+        setCustomBackgrounds(updatedBackgrounds);
+        await saveCustomBackgrounds(updatedBackgrounds);
+        
+        // Set as current background
+        setSelectedBackground({ 
+          type: 'picture', 
+          uri: { uri: asset.uri }, 
+          name: newBackground.name 
+        });
+        
+        Alert.alert('成功', '自定义背景已添加！');
+      }
+    } catch (error) {
+      Alert.alert('错误', '选择背景图片失败');
+      console.log('Image picker error:', error);
+    }
+  };
+
   const refreshFont = () => {
     // Force re-render of text components
     setFontKey(prev => prev + 1);
@@ -244,7 +315,10 @@ export default function App() {
     // Clear text input focus to force re-render
     if (isEditingText) {
       setIsEditingText(false);
-      setTimeout(() => setIsEditingText(true), 100);
+      setTimeout(() => {
+        setIsEditingText(true);
+        textInputRef.current?.focus();
+      }, 100);
     }
     
     // Show feedback to user
@@ -253,13 +327,34 @@ export default function App() {
 
   const pickCustomFont = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['font/*', 'application/x-font-ttf', 'application/x-font-otf'],
+      // First try with specific font MIME types
+      let result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'font/*',
+          'application/x-font-ttf', 
+          'application/x-font-otf',
+          'application/vnd.ms-fontobject',
+          'application/octet-stream',
+          '*/*'
+        ],
         copyToCacheDirectory: true,
       });
 
       if (result.canceled) {
         return;
+      }
+
+      // If no file selected, try with more permissive settings
+      if (!result.assets || result.assets.length === 0) {
+        console.log('No file selected with specific types, trying with all files...');
+        result = await DocumentPicker.getDocumentAsync({
+          type: '*/*',
+          copyToCacheDirectory: true,
+        });
+        
+        if (result.canceled || !result.assets || result.assets.length === 0) {
+          return;
+        }
       }
 
       const file = result.assets[0];
@@ -268,8 +363,23 @@ export default function App() {
         return;
       }
 
-      // Extract font name from filename
+      // Validate file extension
       const fileName = file.name || 'CustomFont';
+      const fileExtension = fileName.toLowerCase().split('.').pop();
+      
+      if (!fileExtension || !['ttf', 'otf'].includes(fileExtension)) {
+        Alert.alert('错误', `不支持的文件格式: ${fileExtension}。请选择 .ttf 或 .otf 字体文件。`);
+        return;
+      }
+
+      console.log('Selected file:', {
+        name: fileName,
+        extension: fileExtension,
+        uri: file.uri,
+        size: file.size
+      });
+
+      // Extract font name from filename
       const fontName = fileName.replace(/\.(ttf|otf)$/i, '');
       const fontValue = `CustomFont_${Date.now()}`;
 
@@ -305,8 +415,6 @@ export default function App() {
   };
 
   const getFontFamily = (fontValue: string) => {
-    // For custom fonts, just return the font value directly
-    // The fonts are loaded with Font.loadAsync, so they should work on both platforms
     return fontValue;
   };
 
@@ -408,7 +516,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <LinearGradient colors={['#667eea', '#764ba2']} style={styles.gradient}>
+      <View style={styles.backgroundContainer}>
         {!fontsLoaded ? (
           <View style={styles.loadingContainer}>
             <Text style={styles.loadingText}>正在加载字体...</Text>
@@ -419,15 +527,18 @@ export default function App() {
               <Text style={styles.headerTitle}>文字艺术</Text>
               <View style={styles.headerButtons}>
                 <TouchableOpacity style={styles.headerButton} onPress={handleSave}>
-                  <Ionicons name="save" size={24} color="white" />
+                  <Ionicons name="save-outline" size={24} color="black" />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
-                  <Ionicons name="share" size={24} color="white" />
+                  <Ionicons name="share-outline" size={24} color="black" />
                 </TouchableOpacity>
               </View>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView 
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+            >
               {/* 画布预览 */}
               <View style={styles.canvasContainer}>
                 <ViewShot ref={viewShotRef} options={{ format: 'png', quality: 1.0 }}>
@@ -437,6 +548,7 @@ export default function App() {
                       {isEditingText ? (
                         <TextInput
                           key={`input-${fontKey}`}
+                          ref={textInputRef}
                           style={[
                             styles.textInput,
                             {
@@ -453,6 +565,7 @@ export default function App() {
                           autoFocus
                           blurOnSubmit
                           placeholder="输入您的文字..."
+                          placeholderTextColor="#999"
                         />
                       ) : (
                         <TouchableOpacity
@@ -484,19 +597,22 @@ export default function App() {
               <View style={styles.controls}>
                 {/* 文字大小控制 */}
                 <View style={styles.controlSection}>
-                  <Text style={styles.controlLabel}>文字大小: {fontSize}</Text>
-                  <View style={styles.sizeControls}>
+                  <Text style={styles.controlLabel}>文字大小</Text>
+                  <View style={styles.sizeControlContainer}>
                     <TouchableOpacity
                       style={styles.sizeButton}
                       onPress={() => setFontSize(Math.max(10, fontSize - 2))}
                     >
-                      <Ionicons name="remove" size={20} color="white" />
+                      <Ionicons name="remove" size={20} color="black" />
                     </TouchableOpacity>
+                    <View style={styles.fontSizeDisplay}>
+                      <Text style={styles.fontSizeText}>{fontSize}</Text>
+                    </View>
                     <TouchableOpacity
                       style={styles.sizeButton}
                       onPress={() => setFontSize(Math.min(72, fontSize + 2))}
                     >
-                      <Ionicons name="add" size={20} color="white" />
+                      <Ionicons name="add" size={20} color="black" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -506,13 +622,16 @@ export default function App() {
                   style={styles.controlButton}
                   onPress={() => setShowFontModal(true)}
                 >
-                  <Ionicons name="text" size={20} color="white" />
-                  <Text style={styles.controlButtonText}>
-                    字体: {FONTS.find(f => f.value === fontFamily)?.name || fontFamily}
-                  </Text>
-                  <Text style={styles.fontDebug}>
-                    {getFontFamily(fontFamily)} | 字体ID: {fontKey}
-                  </Text>
+                  <View style={styles.controlButtonIcon}>
+                    <Ionicons name="text-outline" size={20} color="black" />
+                  </View>
+                  <View style={styles.controlButtonContent}>
+                    <Text style={styles.controlButtonTitle}>字体</Text>
+                    <Text style={styles.controlButtonSubtitle}>
+                      {allFonts.find(f => f.value === fontFamily)?.name || fontFamily}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
                 </TouchableOpacity>
 
                 {/* 文字颜色 */}
@@ -520,8 +639,14 @@ export default function App() {
                   style={styles.controlButton}
                   onPress={() => setShowColorModal(true)}
                 >
-                  <View style={[styles.colorPreview, { backgroundColor: textColor }]} />
-                  <Text style={styles.controlButtonText}>文字颜色</Text>
+                  <View style={[styles.controlButtonIcon, styles.colorPreviewContainer]}>
+                    <View style={[styles.colorPreview, { backgroundColor: textColor }]} />
+                  </View>
+                  <View style={styles.controlButtonContent}>
+                    <Text style={styles.controlButtonTitle}>文字颜色</Text>
+                    <Text style={styles.controlButtonSubtitle}>{textColor}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
                 </TouchableOpacity>
 
                 {/* 背景 */}
@@ -529,8 +654,14 @@ export default function App() {
                   style={styles.controlButton}
                   onPress={() => setShowBackgroundModal(true)}
                 >
-                  <Ionicons name="image" size={20} color="white" />
-                  <Text style={styles.controlButtonText}>背景: {selectedBackground.name}</Text>
+                  <View style={styles.controlButtonIcon}>
+                    <Ionicons name="color-palette-outline" size={20} color="black" />
+                  </View>
+                  <View style={styles.controlButtonContent}>
+                    <Text style={styles.controlButtonTitle}>背景</Text>
+                    <Text style={styles.controlButtonSubtitle}>{selectedBackground.name}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
                 </TouchableOpacity>
 
                 {/* 图片背景 */}
@@ -538,14 +669,20 @@ export default function App() {
                   style={styles.controlButton}
                   onPress={() => setShowPictureModal(true)}
                 >
-                  <Ionicons name="images" size={20} color="white" />
-                  <Text style={styles.controlButtonText}>图片背景</Text>
+                  <View style={styles.controlButtonIcon}>
+                    <Ionicons name="image-outline" size={20} color="black" />
+                  </View>
+                  <View style={styles.controlButtonContent}>
+                    <Text style={styles.controlButtonTitle}>图片背景</Text>
+                    <Text style={styles.controlButtonSubtitle}>选择图片背景</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color="#999" />
                 </TouchableOpacity>
 
                 {/* 文字对齐 */}
                 <View style={styles.controlSection}>
                   <Text style={styles.controlLabel}>文字对齐</Text>
-                  <View style={styles.alignmentButtons}>
+                  <View style={styles.alignmentContainer}>
                     {TEXT_ALIGNMENTS.map((alignment) => (
                       <TouchableOpacity
                         key={alignment}
@@ -555,19 +692,15 @@ export default function App() {
                         ]}
                         onPress={() => setTextAlign(alignment)}
                       >
-                        <Ionicons
-                          name={
-                            alignment === 'left'
-                              ? 'text'
-                              : alignment === 'center'
-                              ? 'text'
-                              : alignment === 'right'
-                              ? 'text'
-                              : 'text'
-                          }
-                          size={16}
-                          color={textAlign === alignment ? '#667eea' : 'white'}
-                        />
+                        <Text style={[
+                          styles.alignmentText,
+                          { color: textAlign === alignment ? '#fff' : '#000' }
+                        ]}>
+                          {alignment === 'left' ? '左对齐' : 
+                           alignment === 'center' ? '居中' : 
+                           alignment === 'right' ? '右对齐' : 
+                           '两端对齐'}
+                        </Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -576,7 +709,7 @@ export default function App() {
                 {/* 画布比例 */}
                 <View style={styles.controlSection}>
                   <Text style={styles.controlLabel}>画布比例</Text>
-                  <View style={styles.ratioButtons}>
+                  <View style={styles.ratioContainer}>
                     {['1:1', '16:9', '4:3', '3:4'].map((ratio) => (
                       <TouchableOpacity
                         key={ratio}
@@ -609,7 +742,7 @@ export default function App() {
                     <Text style={styles.modalTitle}>选择字体</Text>
                     <View style={styles.modalHeaderButtons}>
                       <TouchableOpacity onPress={refreshFont} style={styles.refreshButton}>
-                        <Ionicons name="refresh" size={20} color="#667eea" />
+                        <Ionicons name="refresh-outline" size={20} color="black" />
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => setShowFontModal(false)}>
                         <Ionicons name="close" size={24} color="black" />
@@ -620,17 +753,33 @@ export default function App() {
                   {/* Custom Font Section */}
                   <View style={styles.customFontSection}>
                     <TouchableOpacity style={styles.addFontButton} onPress={pickCustomFont}>
-                      <Ionicons name="add-circle" size={24} color="#667eea" />
+                      <Ionicons name="add-circle-outline" size={24} color="black" />
                       <Text style={styles.addFontText}>添加自定义字体</Text>
                     </TouchableOpacity>
                     <Text style={styles.customFontInfo}>
                       支持 TTF 和 OTF 格式
                     </Text>
                     
-                    {/* Custom Fonts List */}
+                    {/* Custom Fonts Toggle */}
                     {customFonts.length > 0 && (
+                      <TouchableOpacity 
+                        style={styles.customFontsToggle}
+                        onPress={() => setShowCustomFonts(!showCustomFonts)}
+                      >
+                        <Text style={styles.customFontsToggleText}>
+                          已添加的字体 ({customFonts.length})
+                        </Text>
+                        <Ionicons 
+                          name={showCustomFonts ? "chevron-up" : "chevron-down"} 
+                          size={20} 
+                          color="#666" 
+                        />
+                      </TouchableOpacity>
+                    )}
+                    
+                    {/* Custom Fonts List - Collapsible */}
+                    {customFonts.length > 0 && showCustomFonts && (
                       <View style={styles.customFontsList}>
-                        <Text style={styles.customFontsTitle}>已添加的字体:</Text>
                         {customFonts.map((font, index) => (
                           <View key={font.value} style={styles.customFontItem}>
                             <Text style={styles.customFontName}>{font.name}</Text>
@@ -659,7 +808,7 @@ export default function App() {
                                 );
                               }}
                             >
-                              <Ionicons name="trash" size={16} color="#ff4444" />
+                              <Ionicons name="trash-outline" size={16} color="#ff4444" />
                             </TouchableOpacity>
                           </View>
                         ))}
@@ -667,7 +816,7 @@ export default function App() {
                     )}
                   </View>
 
-                  <ScrollView>
+                  <ScrollView showsVerticalScrollIndicator={false}>
                     {allFonts.map((font) => (
                       <TouchableOpacity
                         key={font.value}
@@ -686,9 +835,6 @@ export default function App() {
                           { fontFamily: font.value },
                         ]}>
                           {font.name} - 示例文字
-                        </Text>
-                        <Text style={styles.fontInfo}>
-                          {font.value} (ID: {fontKey})
                         </Text>
                         <Text style={styles.fontPreview}>
                           {text}
@@ -740,7 +886,7 @@ export default function App() {
                       <Ionicons name="close" size={24} color="black" />
                     </TouchableOpacity>
                   </View>
-                  <ScrollView>
+                  <ScrollView showsVerticalScrollIndicator={false}>
                     {BACKGROUND_PRESETS.map((bg, index) => (
                       <TouchableOpacity
                         key={index}
@@ -793,6 +939,78 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
                   
+                  {/* 自定义背景选择 */}
+                  <View style={styles.customBackgroundSection}>
+                    <TouchableOpacity style={styles.addBackgroundButton} onPress={pickCustomBackground}>
+                      <Ionicons name="add-circle-outline" size={24} color="black" />
+                      <Text style={styles.addBackgroundText}>从相册选择背景</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.customBackgroundInfo}>
+                      选择您相册中的图片作为背景
+                    </Text>
+                    
+                    {/* 自定义背景列表 */}
+                    {customBackgrounds.length > 0 && (
+                      <View style={styles.customBackgroundsList}>
+                        <Text style={styles.customBackgroundsTitle}>我的背景:</Text>
+                        {customBackgrounds.map((bg) => (
+                          <TouchableOpacity
+                            key={bg.id}
+                            style={[
+                              styles.backgroundItem,
+                              selectedBackground.type === 'picture' && 
+                              selectedBackground.uri?.uri === bg.uri && 
+                              styles.modalItemActive,
+                            ]}
+                            onPress={() => {
+                              setSelectedBackground({ 
+                                type: 'picture', 
+                                uri: { uri: bg.uri }, 
+                                name: bg.name 
+                              });
+                              setShowPictureModal(false);
+                            }}
+                          >
+                            <View style={styles.backgroundPreview}>
+                              <Image source={{ uri: bg.uri }} style={styles.backgroundPreviewBox} />
+                            </View>
+                            <View style={styles.backgroundInfo}>
+                              <Text style={styles.modalItemText}>{bg.name}</Text>
+                              <Text style={styles.backgroundCategory}>自定义</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.removeBackgroundButton}
+                              onPress={() => {
+                                Alert.alert(
+                                  '删除背景',
+                                  `确定要删除背景 "${bg.name}" 吗？`,
+                                  [
+                                    { text: '取消', style: 'cancel' },
+                                    {
+                                      text: '删除',
+                                      style: 'destructive',
+                                      onPress: () => {
+                                        const updatedBackgrounds = customBackgrounds.filter(b => b.id !== bg.id);
+                                        setCustomBackgrounds(updatedBackgrounds);
+                                        saveCustomBackgrounds(updatedBackgrounds);
+                                        if (selectedBackground.type === 'picture' && 
+                                            selectedBackground.uri?.uri === bg.uri) {
+                                          setSelectedBackground(BACKGROUND_PRESETS[0]);
+                                        }
+                                      }
+                                    }
+                                  ]
+                                );
+                              }}
+                            >
+                              <Ionicons name="trash-outline" size={16} color="#ff4444" />
+                            </TouchableOpacity>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                  
                   {/* 分类筛选 */}
                   <View style={styles.categoryFilter}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -816,7 +1034,7 @@ export default function App() {
                     </ScrollView>
                   </View>
 
-                  <ScrollView>
+                  <ScrollView showsVerticalScrollIndicator={false}>
                     {PICTURE_BACKGROUNDS
                       .filter(bg => selectedPictureCategory === '全部' || bg.category === selectedPictureCategory)
                       .map((bg) => (
@@ -848,7 +1066,7 @@ export default function App() {
             </Modal>
           </>
         )}
-      </LinearGradient>
+      </View>
     </SafeAreaView>
   );
 }
@@ -856,50 +1074,63 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#F3F3F3',
   },
-  gradient: {
+  backgroundContainer: {
     flex: 1,
+    backgroundColor: '#F3F3F3',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 20,
     paddingTop: 10,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-    fontFamily: 'PingFang SC',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.5,
   },
   headerButtons: {
     flexDirection: 'row',
+    gap: 15,
   },
   headerButton: {
-    marginLeft: 15,
-    padding: 8,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingBottom: 30,
   },
   canvasContainer: {
     alignItems: 'center',
+    marginTop: 20,
     marginBottom: 30,
   },
   canvasWrapper: {
     position: 'relative',
+    borderRadius: 16,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
   canvas: {
-    borderRadius: 10,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    borderRadius: 16,
   },
   textContainer: {
     position: 'absolute',
@@ -938,197 +1169,281 @@ const styles = StyleSheet.create({
   pictureBackground: {
     width: '100%',
     height: '100%',
-    borderRadius: 10,
+    borderRadius: 16,
   },
   controls: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 15,
-    padding: 20,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 20,
+    padding: 24,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
   },
   controlSection: {
-    marginBottom: 20,
+    marginBottom: 32,
   },
   controlLabel: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
-    color: 'white',
-    marginBottom: 10,
-    fontFamily: 'PingFang SC',
+    color: '#000',
+    marginBottom: 16,
+    letterSpacing: 0.3,
   },
-  sizeControls: {
+  sizeControlContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 16,
+    padding: 8,
   },
   sizeButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: 10,
-    borderRadius: 25,
-    marginHorizontal: 10,
+    width: 44,
+    height: 44,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  fontSizeDisplay: {
+    minWidth: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fontSizeText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000',
   },
   controlButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
+    backgroundColor: '#fff',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
-  controlButtonText: {
-    color: 'white',
+  controlButtonIcon: {
+    width: 40,
+    height: 40,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  controlButtonContent: {
+    flex: 1,
+  },
+  controlButtonTitle: {
     fontSize: 16,
-    marginLeft: 10,
-    fontFamily: 'PingFang SC',
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 2,
+  },
+  controlButtonSubtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  colorPreviewContainer: {
+    backgroundColor: 'transparent',
   },
   colorPreview: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 2,
-    borderColor: 'white',
+    borderColor: '#e0e0e0',
   },
-  alignmentButtons: {
+  alignmentContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 16,
+    padding: 8,
   },
   alignmentButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: 12,
-    borderRadius: 8,
+    flex: 1,
+    height: 44,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
   },
   alignmentButtonActive: {
-    backgroundColor: 'white',
+    backgroundColor: '#000',
   },
-  ratioButtons: {
+  ratioContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 16,
+    padding: 8,
   },
   ratioButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    flex: 1,
+    height: 44,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
   },
   ratioButtonActive: {
-    backgroundColor: 'white',
+    backgroundColor: '#000',
   },
   ratioButtonText: {
-    color: 'white',
+    color: '#000',
     fontWeight: '600',
-    fontFamily: 'PingFang SC',
+    fontSize: 16,
   },
   ratioButtonTextActive: {
-    color: '#667eea',
+    color: '#fff',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '70%',
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    paddingBottom: 34,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
   modalHeaderButtons: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
   refreshButton: {
-    marginRight: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    fontFamily: 'PingFang SC',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.3,
   },
   modalItem: {
-    padding: 15,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#f8f9fa',
   },
   modalItemActive: {
-    backgroundColor: '#e3f2fd',
+    backgroundColor: '#f0f8ff',
+    borderLeftWidth: 4,
+    borderLeftColor: '#000',
   },
   modalItemText: {
     fontSize: 16,
-    fontFamily: 'PingFang SC',
-  },
-  fontInfo: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 5,
-  },
-  fontDebug: {
-    fontSize: 10,
-    color: '#ccc',
-    marginTop: 5,
+    color: '#000',
+    fontWeight: '500',
   },
   fontPreview: {
     fontSize: 14,
-    color: '#555',
-    marginTop: 10,
-    fontFamily: 'PingFang SC',
+    color: '#666',
+    marginTop: 8,
   },
   colorGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
     justifyContent: 'space-between',
   },
   colorItem: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginBottom: 15,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginBottom: 16,
     borderWidth: 3,
     borderColor: 'transparent',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   colorItemActive: {
-    borderColor: '#667eea',
+    borderColor: '#000',
+    borderWidth: 4,
   },
   backgroundItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 15,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#f8f9fa',
   },
   backgroundPreview: {
-    marginRight: 15,
+    marginRight: 16,
   },
   backgroundPreviewBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: '#e0e0e0',
   },
   transparentPreview: {
     backgroundColor: '#f0f0f0',
+  },
+  backgroundInfo: {
+    flex: 1,
+  },
+  backgroundCategory: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#667eea',
+    backgroundColor: '#fff',
   },
   loadingText: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: '#000',
+    fontSize: 18,
+    fontWeight: '600',
   },
   customFontSection: {
-    paddingVertical: 15,
+    paddingVertical: 20,
+    paddingHorizontal: 24,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
     backgroundColor: '#f8f9fa',
@@ -1136,96 +1451,152 @@ const styles = StyleSheet.create({
   addFontButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    backgroundColor: '#e3f2fd',
-    borderRadius: 8,
-    marginHorizontal: 15,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderStyle: 'dashed',
   },
   addFontText: {
-    marginLeft: 10,
-    color: '#667eea',
+    marginLeft: 12,
+    color: '#000',
     fontSize: 16,
-    fontFamily: 'PingFang SC',
     fontWeight: '600',
   },
   customFontInfo: {
-    marginTop: 5,
-    color: '#888',
+    marginTop: 8,
+    color: '#666',
     fontSize: 12,
     textAlign: 'center',
   },
   customFontsList: {
-    marginTop: 15,
-    paddingHorizontal: 15,
+    marginTop: 16,
   },
   customFontsTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
-    marginBottom: 10,
-    fontFamily: 'PingFang SC',
+    color: '#000',
+    marginBottom: 12,
+  },
+  customFontsToggle: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  customFontsToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000',
   },
   customFontItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: 'white',
-    borderRadius: 6,
-    marginBottom: 5,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   customFontName: {
     fontSize: 15,
-    color: '#333',
-    fontFamily: 'PingFang SC',
+    color: '#000',
+    fontWeight: '500',
     flex: 1,
   },
   removeFontButton: {
-    padding: 5,
-    backgroundColor: '#ffebee',
-    borderRadius: 4,
+    padding: 8,
+    backgroundColor: '#fff5f5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
   },
   categoryFilter: {
-    flexDirection: 'row',
-    marginBottom: 15,
-    paddingHorizontal: 10,
-    paddingBottom: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
   categoryButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 20,
-    marginRight: 10,
+    marginRight: 12,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: '#e0e0e0',
   },
   categoryButtonActive: {
-    backgroundColor: 'white',
-    borderColor: '#667eea',
+    backgroundColor: '#000',
+    borderColor: '#000',
   },
   categoryButtonText: {
-    color: 'white',
+    color: '#666',
     fontSize: 14,
-    fontFamily: 'PingFang SC',
     fontWeight: '600',
   },
   categoryButtonTextActive: {
-    color: '#667eea',
+    color: '#fff',
   },
-  backgroundInfo: {
-    flex: 1,
-    marginLeft: 10,
+  customBackgroundSection: {
+    paddingVertical: 20,
+    paddingHorizontal: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    backgroundColor: '#f8f9fa',
   },
-  backgroundCategory: {
+  addBackgroundButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderStyle: 'dashed',
+  },
+  addBackgroundText: {
+    marginLeft: 12,
+    color: '#000',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  customBackgroundInfo: {
+    marginTop: 8,
+    color: '#666',
     fontSize: 12,
-    color: '#888',
-    marginTop: 5,
+    textAlign: 'center',
+  },
+  customBackgroundsList: {
+    marginTop: 16,
+  },
+  customBackgroundsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 12,
+  },
+  removeBackgroundButton: {
+    padding: 8,
+    backgroundColor: '#fff5f5',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  alignmentText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

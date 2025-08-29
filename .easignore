@@ -1,0 +1,58 @@
+# Node modules
+node_modules/
+
+# Development files
+*.log
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Test files
+__tests__/
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# Temporary files
+*.tmp
+*.temp
+
+# Large font files that might not be needed for build
+assets/fonts/*.ttf
+assets/fonts/*.otf
+
+# Keep only essential fonts for the build
+!assets/fonts/HanyiSentyPagoda Regular.ttf
+!assets/fonts/Dymon-ShouXieTi.otf
+!assets/fonts/DFLiKingHei1B Regular.ttf
+!assets/fonts/baotuxiaobaiti Regular.ttf
+!assets/fonts/SentyPaperCut Regular.ttf
+!assets/fonts/OzCaramel Regular.ttf
+!assets/fonts/HanyiSentySpringBrush Regular.ttf
+!assets/fonts/YRDZST Semibold.ttf
+!assets/fonts/Slidefu-Regular-2.ttf
+!assets/fonts/字魂乌龙茶(商用需授权).ttf
+!assets/fonts/字魂白鸽天行体(商用需授权).ttf
+!assets/fonts/HanYiBaiQingTiJian-1.ttf
+!assets/fonts/HanYiCaiDieTiJian-1.ttf
+!assets/fonts/MeiRenDeZi-2.ttf
+!assets/fonts/AZhuPaoPaoTi-2.ttf
+!assets/fonts/Source Han Sans CN Light.otf
+
